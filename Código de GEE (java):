@@ -1,0 +1,103 @@
+// Importar el mapa de Perú
+var Peru = ee.FeatureCollection("FAO/GAUL/2015/level1").filter(ee.Filter.eq("ADM0_NAME", "Peru"));
+
+// Importar la reserva "Tambopata"
+var tambopata = ee.FeatureCollection("WCMC/WDPA/current/polygons").filter(ee.Filter.eq("ORIG_NAME", "Tambopata"));
+
+// Importar el mapa de cambio de cobertura boscosa
+var hansen = ee.Image('UMD/hansen/global_forest_change_2023_v1_11');
+var mapa_perdida = hansen.clip(tambopata);
+var lossImage = mapa_perdida.select('lossyear');
+var bosque_perdido = lossImage.gt(0);  // Máscara de pérdida de bosque
+
+// Mapa de cobertura de suelo de ESA WorldCover
+var cobertura = ee.ImageCollection("ESA/WorldCover/v200").first().clip(tambopata);
+
+// Importar el mapa de cobertura de suelo de ESA WorldCover
+var cobertura = ee.ImageCollection("ESA/WorldCover/v200").first();
+var region_Tambopata = cobertura.clip(tambopata);
+
+// Cuerpos de agua
+var claseAgua = 80;
+var agua = region_Tambopata.eq(claseAgua);
+Map.addLayer(agua, {min: 0, max: 1, palette: ["white", "black"]}, "Cuerpos de agua");
+
+// Importar datos de minería ilegal y filtrar por la reserva Tambopata
+var Mineria_ilegal = ee.FeatureCollection("projects/onyx-window-418218/assets/MineriaIlegal_pol");
+var Mineria_ilegal_Tambopata = Mineria_ilegal.filterBounds(tambopata);
+Map.addLayer(Mineria_ilegal_Tambopata, {color: "yellow"}, "Minería ilegal en Tambopata");
+
+// Parámetros de visualización para áreas de pérdida de bosque
+var treeLossVisParam = {
+  bands: ['lossyear'],
+  min: 21,
+  max: 23,
+  palette: ['red']
+};
+Map.addLayer(mapa_perdida, treeLossVisParam, "Mapa de pérdida de bosques en Tambopata");
+
+
+// Convertir la máscara de agua en vectores para análisis
+var vectorAgua = agua.selfMask().reduceToVectors({
+  reducer: ee.Reducer.countEvery(),
+  geometry: tambopata,
+  scale: 30,
+  maxPixels: 1e13
+});
+
+var calcularArea = function(feature) {
+  var area = feature.geometry().area(10);
+  return feature.set('area', area); // Agregar el área como una propiedad a la entidad
+};
+
+// Aplicar la función a cada entidad en la colección
+var colecciónConÁrea = vectorAgua.map(calcularArea);
+// Calcular la suma total de áreas
+var sumaTotal = colecciónConÁrea.reduceColumns(ee.Reducer.sum(), ['area']).get('sum');
+
+
+// Área total de Tambopata
+var areaTambopata = tambopata.geometry().area();
+
+// Calcular área de minería ilegal y bosque perdido
+var areaMineriaIlegal = Mineria_ilegal_Tambopata.geometry().area();
+
+// Calcular área de bosque perdido
+var areaBosquePerdido = bosque_perdido.multiply(ee.Image.pixelArea()).reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: tambopata.geometry(),
+  scale: 30,
+  maxPixels: 1e13
+}).getNumber('lossyear');  // Corrección para obtener directamente un número
+
+// Área total de Tambopata
+var areaTambopata = tambopata.geometry().area();
+
+// Calcula la intersección de minería ilegal y la reserva para obtener áreas precisas
+var mineriaIntersect = Mineria_ilegal_Tambopata.map(function(feature) {
+  return feature.intersection(tambopata.geometry(), ee.ErrorMargin(1));
+});
+
+// Área de minería ilegal ajustada por intersección
+var areaMineriaIlegal = mineriaIntersect.geometry().area();
+
+// Porcentajes de afectación ajustados
+var porcentajeMineria = areaMineriaIlegal.divide(areaTambopata).multiply(100);
+
+// Calcular área de bosque perdido
+var areaBosquePerdido = bosque_perdido.multiply(ee.Image.pixelArea()).reduceRegion({
+  reducer: ee.Reducer.sum(),
+  geometry: tambopata.geometry(),
+  scale: 30,
+  maxPixels: 1e13
+}).getNumber('lossyear');  // Corrección para obtener directamente un número
+
+var porcentajeBosquePerdido = areaBosquePerdido.divide(areaTambopata).multiply(100);
+
+// Imprimir resultados ajustados
+print('Área total de Tambopata (m²):', areaTambopata);
+print('Área de minería ilegal ajustada en Tambopata (m²):', areaMineriaIlegal);
+print('Porcentaje de Tambopata afectado por minería ilegal ajustado (%):', porcentajeMineria);
+print('Área de bosque perdido en Tambopata (m²):', areaBosquePerdido);
+print('Porcentaje de bosque perdido en Tambopata (%):', porcentajeBosquePerdido);
+print('Area de cuerpos de agua en Tambopata (m²):', sumaTotal);
